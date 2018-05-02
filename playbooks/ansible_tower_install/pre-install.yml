@@ -1,12 +1,16 @@
 ---
 
 - hosts: all
+  become: yes
+  become_method: sudo
   vars:
-    deploy_user_name: 'toweradm'
-    deploy_user_home: "/usr/local/home/{{ deploy_user_name }}"
+    deploy_user_name: 'testuser'
+    deploy_user_home: "/home/{{ deploy_user_name }}"
     deploy_user_password: "redhat"
     create_deploy_user: True
     puppet_environment: False
+    primary_server: "tower1"
+    running_user: "admin"
   tasks:
 
     - name: Stop Puppet agent process
@@ -29,20 +33,65 @@
             groups: wheel
             home: "{{ deploy_user_home }}"
             password: "{{ deploy_user_password }}"
-            generate_ssh_key: yes
-            ssh_key_file: ".ssh/id_rsa"
-            ssh_key_type: rsa
-            ssh_key_passphrase: ""
-      
+
+        - name: Create ssh directory
+          file:
+            path: "{{ deploy_user_home }}/.ssh"
+            state: directory
+            mode: 0700
+            owner: "{{ deploy_user_name }}"
+            group: "{{ deploy_user_name }}"
+
+        - name: Create ssh key on one machine
+          command: "ssh-keygen -q -f /tmp/id_rsa -N ''"
+          args:
+            creates: "/tmp/id_rsa"
+          delegate_to: localhost
+          ignore_errors: true
+
+        - name: Correct permissions on the keys
+          file:
+            path: "/tmp/{{ item }}"
+            owner: "{{ running_user }}"
+            group: "{{ running_user }}"
+            state: file
+          with_items:
+            - id_rsa
+            - id_rsa.pub
+          delegate_to: localhost
+          ignore_errors: true
+
         - name: Allow public key auth to deploy user
           authorized_key:
             user: "{{ deploy_user_name }}"
             state: present
-            key: "{{ lookup('file', '{{ deploy_user_home }}/id_rsa.pub') }}"
+            key: "{{ lookup('file', '/tmp/id_rsa.pub') }}"
           when: not ansible_check_mode
 
+        - name: Copy keys to other boxes
+          copy:
+            src: "/tmp/{{ item }}"
+            dest: "{{ deploy_user_home }}/.ssh/{{ item }}"
+            owner: "{{ deploy_user_name }}"
+            group: "{{ deploy_user_name }}"
+          with_items:
+          - id_rsa
+          - id_rsa.pub
+
+        - name: set mode on the keys
+          file:
+            path: "{{ deploy_user_home }}/.ssh/id_rsa"
+            mode: 0700
+            state: file
+
+        - name: set mode on the keys
+          file:
+            path: "{{ deploy_user_home }}/.ssh/id_rsa.pub"
+            mode: 0644
+            state: file
+
         - name: Add user to /etc/sudoers
-          block_in_file:
+          blockinfile:
             block: "#Temporary for Ansible Tower Update\n{{ deploy_user_name }} ALL=(ALL) NOPASSWD: ALL"
             dest: "/etc/sudoers"
             validate: "/usr/sbin/visudo -cf %s"
@@ -104,3 +153,4 @@
       when:
         - nsswitch['content'] is defined
         - nsswitch['content'] | b64decode | regex_search('(sudoers:.*ldap)')
+
