@@ -32,7 +32,7 @@
             name: "{{ deploy_user_name }}"
             groups: wheel
             home: "{{ deploy_user_home }}"
-            password: "{{ deploy_user_password }}"
+            password: "{{ deploy_user_password | password_hash('sha512') }}"
 
         - name: Create ssh directory
           file:
@@ -96,13 +96,14 @@
             dest: "/etc/sudoers"
             validate: "/usr/sbin/visudo -cf %s"
             insertafter: EOF
-            
-        - name: Add user to ssh allowed users
-          lineinfile:
-            path: "/etc/ssh/sshd_config"
-            regexp: "^AllowUsers(.*)"
-            line: 'AllowUsers {{ deploy_user_name }} \1'
-            state: present
+
+# IF needed, uncomment            
+#        - name: Add user to ssh allowed users
+#          lineinfile:
+#            path: "/etc/ssh/sshd_config"
+#            regexp: "^AllowUsers(.*)"
+#            line: 'AllowUsers {{ deploy_user_name }} \1'
+#            state: present
 
 # This "when" conditional controls the entire block section
       when: create_deploy_user
