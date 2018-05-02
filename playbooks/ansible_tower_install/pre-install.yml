@@ -96,6 +96,13 @@
             dest: "/etc/sudoers"
             validate: "/usr/sbin/visudo -cf %s"
             insertafter: EOF
+            
+        - name: Add user to ssh allowed users
+          lineinfile:
+            path: "/etc/ssh/sshd_config"
+            regexp: "^AllowUsers(.*)"
+            line: 'AllowUsers {{ deploy_user_name }} \1'
+            state: present
 
 # This "when" conditional controls the entire block section
       when: create_deploy_user
@@ -153,4 +160,10 @@
       when:
         - nsswitch['content'] is defined
         - nsswitch['content'] | b64decode | regex_search('(sudoers:.*ldap)')
+        
+    - name: Restart SSH services
+      service: sshd
+        state: restarted
+    # unsurprisingly, restarting ssh while connected to ssh will probably complain
+      ignore_errors: true
 
