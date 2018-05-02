@@ -1,0 +1,106 @@
+---
+
+- hosts: all
+  vars:
+    deploy_user_name: 'toweradm'
+    deploy_user_home: "/usr/local/home/{{ deploy_user_name }}"
+    deploy_user_password: "redhat"
+    create_deploy_user: True
+    puppet_environment: False
+  tasks:
+
+    - name: Stop Puppet agent process
+      service:
+        name: puppet
+        state: stopped
+      when: puppet_environment
+
+# Create a local user to get around issues with LDAP and default umask
+# With LDAP connected, the default umask comes from LDAP, so we need to either have a service account in LDAP 
+# with a umask of 0022, or use this workaround to create a local user, create and share keys and disconnect the LDAP.
+
+
+    - name: Create a local user that will deploy Ansible Tower
+      block:
+    
+        - name: Create a deploy user
+          user:
+            name: "{{ deploy_user_name }}"
+            groups: wheel
+            home: "{{ deploy_user_home }}"
+            password: "{{ deploy_user_password }}"
+            generate_ssh_key: yes
+            ssh_key_file: ".ssh/id_rsa"
+            ssh_key_type: rsa
+            ssh_key_passphrase: ""
+      
+        - name: Allow public key auth to deploy user
+          authorized_key:
+            user: "{{ deploy_user_name }}"
+            state: present
+            key: "{{ lookup('file', '{{ deploy_user_home }}/id_rsa.pub') }}"
+          when: not ansible_check_mode
+
+        - name: Add user to /etc/sudoers
+          block_in_file:
+            block: "#Temporary for Ansible Tower Update\n{{ deploy_user_name }} ALL=(ALL) NOPASSWD: ALL"
+            dest: "/etc/sudoers"
+            validate: "/usr/sbin/visudo -cf %s"
+            insertafter: EOF
+
+# This "when" conditional controls the entire block section
+      when: create_deploy_user
+
+    #  All config changes done to /etc/sudoers and /etc/nsswitch
+    #+ will be reverted by the post-install playbook
+
+    - name: Read /etc/sudoers
+      slurp:
+        src: /etc/sudoers
+      register: sudoers
+
+    - name: Read /etc/nsswitch.conf
+      slurp:
+        src: /etc/nsswitch.conf
+      register: nsswitch
+
+    #  umask MUST be 0022 for Tower installation
+    - name: Set correct umask in /etc/sudoers
+      lineinfile:
+        path: /etc/sudoers
+        regexp: '^Defaults(.*)umask=(.{4})(.*)$'
+        line: 'Defaults\1umask=0022\3'
+        backrefs: yes
+        backup: yes
+        validate: '/usr/sbin/visudo -cf %s'
+      when:
+        - sudoers['content'] is defined
+        - sudoers['content'] | b64decode | regex_search('(umask=.{4})')
+
+    #  Not allowing root sudo may cause errors, depending on
+    #+ user used to do installation.
+    - name: Set correct root_sudo setting in /etc/sudoers
+      lineinfile:
+        path: /etc/sudoers
+        regexp: '^Defaults(.*)!root_sudo(.*)$'
+        line: 'Defaults\1root_sudo\2'
+        backrefs: yes
+        backup: yes
+        validate: '/usr/sbin/visudo -cf %s'
+      when:
+        - sudoers['content'] is defined
+        - sudoers['content'] | b64decode | regex_search('(!root_sudo)')
+
+    #  To get correct sudoers and umask settings, we must use local 
+    #+ sudoers config, not remote one from LDAP. This is only
+    #+ a temporary change
+    - name: Remove getting sudoers information from ldap in /etc/nsswitch
+      lineinfile:
+        path: /etc/nsswitch.conf
+        regexp: '^sudoers:(.*)ldap(.*)$'
+        line: "sudoers:    files"
+        backrefs: yes
+        backup: yes
+      when:
+        - nsswitch['content'] is defined
+        - nsswitch['content'] | b64decode | regex_search('(sudoers:.*ldap)')
