@@ -4,7 +4,7 @@
   vars:
     puppet_environment: false
   tasks:
-
+  
     #  Automate fix in this article:
     #+ https://access.redhat.com/solutions/3228681
     - name: Set fix path permission bug    
@@ -42,7 +42,7 @@
     - name: Force Ansible Tower Restart
       command: /usr/bin/ansible-tower-service restart
       when: "static_config_files|changed or templated_config_files|changed"
-  
+
 - name: Enable and run puppet to revert configuration changes neccessary for Tower Installation 
   hosts: all
   gather_facts: False
@@ -56,6 +56,13 @@
       when: puppet_environment
 
     - name: Manually trigger puppet agent run
-      command: /usr/bin/puppet agent --test --verbose
+      command: "/usr/bin/puppet agent --test --verbose"
       when: puppet_environment
+      ignore_errors: true
 
+    - name: Remove user from /etc/sudoers
+      blockinfile:
+        block: "#Temporary for Ansible Tower Update\n{{ deploy_user_name }} ALL=(ALL) NOPASSWD: ALL"
+        dest: "/etc/sudoers"
+        validate: "/usr/sbin/visudo -cf %s"
+        state: absent
