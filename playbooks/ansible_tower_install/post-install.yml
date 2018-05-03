@@ -2,6 +2,7 @@
 - name: Enforce config on Ansible Tower Nodes
   hosts: tower
   vars:
+    deploy_user_name: testuser
     puppet_environment: false
   tasks:
   
